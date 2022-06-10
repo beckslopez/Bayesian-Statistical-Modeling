@@ -1,0 +1,286 @@
+---
+title: "Problem Set Three: Bayesian Polynomial Regressions and Splines"
+output:
+  html_document:
+    df_print: paged
+---
+```{r}
+# load library haven
+library(haven)
+library(rethinking)
+library(stringr)
+library(splines)
+library(rjags)
+  
+# import .dat file
+data_hibbs <- read.table("hibbs.dat", header=TRUE)
+```
+
+
+(1a) Consider a Bayesian normal linear regression model of vote against (centered) growth (that is, use growth - mean(growth) ) . What is the meaning of the intercept (alpha)? What is the meaning of the slope (beta)? What is the meaning of the standard deviation (sigma)? Using this knowledge, choose some weakly informative priors for all parameters, and justify your choice.
+
+In a traditional Bayesian linear regression model, sigma is the spread around our mu implying the standard deviation around our mean. Beta is a slope which implies that for unit of growth, vote is expected to grow beta amount. Additionally, alpha is the expected vote when growth=mean(growth). We find the mean of vote to be around 52 so we assume a prior for $\alpha\sim Normal(50,0)$. We take a uniform prior of $\sigma \sim Unif(0,50)$ and $beta\sim Normal(20,10)$ as had done in lecture and lab which will serve as weakly informative.
+
+```{r}
+
+model.hibbs <- "
+  data{
+    D <- dim(x)
+    n <- D[1]
+    p <- D[2]
+  }
+  model{
+    
+   for(i in 1:n){
+      # likelihood
+      y[i] ~ dnorm(mu[i], tau)
+      
+      # posterior predictive
+      ynew[i] ~ dnorm(mu[i], tau)
+   }
+    
+    # conditional mean using matrix algebra
+    mu <- x %*% beta
+    
+    for(j in 1:p){
+      beta[j] ~ dnorm(mb[j], pow(sb[j], -2))
+    }
+    sigma ~ dunif(0, smax)
+    tau <- pow(sigma, -2)
+
+  }
+"
+data_hibbs$growth_s <- c(scale(data_hibbs$growth))
+growth_bar <- mean(data_hibbs$growth_s)
+#x <- cbind(1, data_hibbs$growth-growth_bar)
+x <- cbind(1, data_hibbs$growth_s)
+y <- data_hibbs$vote
+
+str(x)
+
+mb <- c(50,0)
+sb <- c(20, 10)
+
+m.hibbs <- jags.model(file = textConnection(model.hibbs),
+                 data = list(x = x,
+                             y = y,
+                             mb = mb,
+                             sb = sb,
+                             smax = 50))
+
+# extract posterior samples
+m.hibbs.samples <- coda.samples(m.hibbs, 
+                           variable.names = c("beta", "sigma", "mu", "ynew"),
+                           n.iter = 1e4)
+
+# here's our posterior mean and credible intervals
+m.hibbs.df <- data.frame(m.hibbs.samples[[1]])
+precis(m.hibbs.df ,prob=.95)[1:2,1:4]
+```
+
+
+(1b) Compute the posterior distribution of all parameters, and report the posterior mean and 95% credible intervals. Is growth related to expected vote?
+
+By looking at our 95% confidence interval, we see a positive coefficent for beta which means a positive relationship. We use the  plot produced in 1c to help us see that growth appears to have a positive relationship with expected such that $\beta$ will be positive.
+```{r}
+#Extract Values for intervals
+sample.mu<- m.hibbs.df[,3:18]
+sample.ynew <- m.hibbs.df[,20:35]
+
+mu.interval <- apply(sample.mu,2,PI,prob=0.95)
+ynew.interval <- apply(sample.ynew,2,PI,prob=0.95)
+  
+data_hibbs$mu.mean  <- colMeans(sample.mu)
+data_hibbs$mu.lwr   <-  mu.interval[1,]
+data_hibbs$mu.upr   <-  mu.interval[2,]
+data_hibbs$ynew.lwr <- ynew.interval[1,]
+data_hibbs$ynew.upr <- ynew.interval[2,]
+
+```
+
+
+(1c) Plot the scatter plot of vote versus growth, and include in the plot: (i) the posterior mean of the regression line; (ii) the 95% credible interval for the regression line; and (iii) the 95% prediction interval.
+
+Below we produced the required plot where the blue shaded region is the 95% interval for the regression line which is the mean and the red shaded region is the 95% predication interval.
+
+```{r}
+ggplot(data_hibbs, aes(y = vote, x = growth_s))  +
+  geom_point(col = alpha("black", 1), cex = .8) +
+  geom_line(aes(y = mu.mean), col = "red") +
+  geom_ribbon(aes(ymin = mu.lwr, ymax = mu.upr), fill = alpha("blue", .5)) +
+  geom_ribbon(aes(ymin = ynew.lwr, ymax = ynew.upr), fill = alpha("red", .3))  +
+  theme_bw()
+```
+
+
+(1d) In the 2016 election (Hillary vs Trump), the average growth in preceding years was about 2%. According to the model, what is the forecasted vote share for Hillary? And what is the the probability that Hillary would win the popular vote?
+
+We can see that it is expected for hilary to win the propular vote as she ends up with greater than 50% of the expected vote portion.
+```{r}
+avg_growth <- 2
+a <-colMeans(m.hibbs.df[,c(1,2,19)])[1]
+b <-colMeans(m.hibbs.df[,c(1,2,19)])[2]
+c <-colMeans(m.hibbs.df[,c(1,2,19)])[3]
+expect_vote <-a +b*(avg_growth-growth_bar)
+expect_vote
+```
+
+###4M3 Translate the quap model formula below into a mathematical model definition:
+
+```{r}
+# y ~ dnorm( mu , sigma )
+# mu <- a + b*x
+# a ~ dnorm( 0 , 10 )
+# b ~ dunif( 0 , 1 )
+# sigma ~ dexp( 1 )
+```
+We are able to write the above model formula as the following mathematical model definition which is a linear regression:
+$$y_i \sim Normal (\mu, \sigma)\\
+\mu_i = \alpha+\beta x_i\\
+\alpha \sim Normal(0,10)\\
+\beta \sim Uniform(0,1)\\
+\sigma \sim Exponential(1)$$
+
+
+###4H5 Return to data(cherry_blossoms) and model the association between blossom date (doy)
+and March temperature (temp). Note that there are many missing values in both variables. You may
+consider a linear model, a polynomial, or a spline on temperature. How well does temperature trend
+predict the blossom trend?
+
+```{r}
+data(cherry_blossoms)
+
+#Only take data that is not missing values
+data_cherry <- na.omit(cherry_blossoms)
+
+plot(data_cherry$temp, data_cherry$doy)
+```
+
+Just from the plot, we can see some sort of linear relationship, horizontally. The data does appear quite noisy and contains a great amount of variance. And so in the trade off between overfitting and losing detail, Ive chosen to do a polynomial regession (cubic) model.
+
+```{r}
+cherry_bar<-mean(data_cherry$temp)
+
+data_cherry$temp_s <- c(scale(data_cherry$temp))
+data_cherry$temp_s2 <- data_cherry$temp_s^2
+data_cherry$temp_s3<-data_cherry$temp_s^3
+
+m.cherry1<-quap(
+    alist(
+    D~dnorm(mu,sigma),
+    mu<-a+b1*temp_s+b2*temp_s2+b3*temp_s3,
+    #priors given in textbook
+    a~dnorm(100,10),
+    b1~dnorm(0,1),
+    b2~dnorm(0,1),
+    b3~dnorm(0,1),
+    sigma~dexp(1)
+    ),data=list(D=data_cherry$doy,temp_s=data_cherry$temp_s,temp_s2=data_cherry$temp_s2,temp_s3=data_cherry$temp_s3)
+    )
+
+
+
+#Values used for Model
+precis(m.cherry1)
+
+#Produce Plot with 89% Posterior Interval of mean and of doy 
+temp.seq <- seq( from=- 3, to=3 , length.out=30 )
+pred_dat <- list( temp_s=temp.seq , temp_s2=temp.seq^2, temp_s3=temp.seq^3)
+
+mu <- link( m.cherry1 , data=pred_dat )
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+sim.doy <- sim( m.cherry1 , data=pred_dat )
+doy.PI <- apply( sim.doy , 2 , PI , prob=0.89 )
+
+plot( doy ~ temp_s , data_cherry , col=col.alpha(rangi2,0.5) )
+lines( temp.seq , mu.mean )
+shade( mu.PI , temp.seq,col=col.alpha('blue', 0.3))
+shade( doy.PI , temp.seq , col=col.alpha('red', 0.3))
+```
+Ultimately, a cubic model did not do the best job as it looks very simple to a linear regression model. I can see that our 89% interval does a good job at capturing the majority of the data. Overall, I would say that there is a relationship between temperature and doy, but temperature may not be the best predictor as it has quite a lot of variation.
+
+
+###4H6  Simulate the prior predictive distribution for the cherry blossom spline in the chapter. Adjust the prior on the weights and observe what happens. What do you think the prior on the weights is doing?
+
+We begin with the cherry blosson spline model code provided in the book.I tried running the model with various values on mean and standard deviation. While mean did not appear to change the model very much, the standard deviation did play a role. We know from the previous questions that the data exhibits a large portion of variation. When the standard deivation was increased, the model appeared to have more curves within the prediction intervals. Vice versa, when the standard deivation decreased, the model showed very curves and caught less of the variation.
+```{r}
+
+num_knots <- 15
+knot_list <- quantile(data_cherry$year,probs=seq(0,1,length.out=num_knots))
+years<-seq(from=min(data_cherry$year),to=max(data_cherry$year),length.out=100)
+
+B<-bs(data_cherry$year,
+        knots=knot_list[-c(1,num_knots)],
+        degree=3,intercept=TRUE)
+
+m4.7 <- quap( 
+alist(
+D ~ dnorm( mu , sigma ) ,
+mu <- a + B %*% w ,
+a ~ dnorm(100,10),
+w ~ dnorm(0,20),
+sigma ~ dexp(2)
+), data=list( D=data_cherry$doy , B=B ) ,
+start=list( w=rep( 0 , ncol(B) ) ) )
+
+post <- extract.samples( m4.7 ) 
+w <- apply( post$w , 2 , mean )
+plot( NULL , xlim=range(data_cherry$year) , ylim=c(-6,6) ,
+xlab="year" , ylab="basis * weight" )
+for ( i in 1:ncol(B) ) lines( data_cherry$year , w[i]*B[,i] )
+
+mu <- link( m4.7 ) 
+mu_PI <- apply(mu,2,PI,0.97)
+plot( data_cherry$year , data_cherry$doy , col=col.alpha(rangi2,0.3) , pch=16 )
+shade( mu_PI , data_cherry$year , col=col.alpha("black",0.5) )
+
+```
+
+###4H8 The cherry blossom spline in the chapter used an intercept ??, but technically it doesn't require one. The first basis functions could substitute for the intercept. Try refitting the cherry blossom spline without the intercept. What else about the model do you need to change to make this work?
+
+We begin by reusing the code used in the book to produce the spline model but take out $alpha.$ The removal of the intercept caused the model to struggle to reach convergence, I had to rerun multiple times to reach such convergence.
+```{r}
+#Using the code from the chapter build similar model but without intercept
+num_knots <- 15
+knot_list <- quantile( data_cherry$year, probs = seq(0, 1, length.out = num_knots) )
+
+B <- bs(data_cherry$year,
+        knots=knot_list[-c(1, num_knots)],
+        degree=3, intercept=TRUE)
+
+m.cherry <- quap( 
+    alist(
+    D ~ dnorm( mu , sigma ) ,
+    mu <-  B %*% w ,
+    w ~ dnorm(0,10),
+    sigma ~ dexp(1)
+    ), data=list( D=data_cherry$doy , B=B ) ,
+    start=list( w=rep( 0 , ncol(B) ) ) )
+
+
+mu <- link( m.cherry) 
+mu_PI <- apply(mu,2,PI,0.97)
+plot( data_cherry$year , data_cherry$doy , col=col.alpha(rangi2,0.3) , pch=16 )
+shade( mu_PI , data_cherry$year , col=col.alpha("red",0.5) )
+
+```
+My only thought to include the benefits of the intercept is change the distribution of our weights to match the distribution that had belonged to alpha. We see below that while it doesn't change much of the model, it does address our concerns and such droppage along the bounds of our data.
+```{r}
+m.cherry2 <- quap( 
+  alist(
+  D ~ dnorm( mu , sigma ) ,
+  mu <-  B %*% w ,
+  w ~ dnorm(100,10),
+  sigma ~ dexp(1)
+  ), data=list( D=data_cherry$doy , B=B ) ,
+  start=list( w=rep( 0 , ncol(B) ) ) )
+
+mu <- link( m.cherry2) 
+mu_PI <- apply(mu,2,PI,0.97)
+plot( data_cherry$year , data_cherry$doy , col=col.alpha(rangi2,0.3) , pch=16 )
+shade( mu_PI , data_cherry$year , col=col.alpha("red",0.5) )
+
+```
+
+

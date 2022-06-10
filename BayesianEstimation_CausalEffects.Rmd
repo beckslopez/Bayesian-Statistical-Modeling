@@ -1,0 +1,759 @@
+---
+title: "Problem Set Five: Bayesian Estimation of Causal Effects"
+subtitle: "By Rebecca Lopez"
+output: html_notebook
+---
+```{r}
+# install.packages("readxl")
+library("readxl")
+library(rethinking)
+library(dagitty)
+library(brms)
+library(rjags)
+#library(tidygraph)
+```
+
+# Questions from Textbook
+
+##Problem 6M3
+Learning to analyze DAGs requires practice. For each of the four DAGs below, state which
+variables, if any, you must adjust for (condition on) to estimate the total causal influence of X on Y.
+
+###First Dag
+```{r}
+dag1<- dagitty("dag{
+               X->Y
+               X<-Z->Y
+               X<-Z<-A->Y
+               }")
+coordinates(dag1 )<- list(x=c(X=0,Y=2,Z=1,A=2) ,y=c(X=1,Y=1,Z=0,A=0) )
+drawdag(dag1)
+
+```
+We can see two open backdoor paths for the causal influence of X on Y, X<-Z->Y and X<-Z<-A->Y, and since they both go through Z, we will condition on Z
+
+###Second Dag
+```{r}
+dag2<- dagitty("dag{
+               X->Y
+               X->Z->Y
+               X->Z<-A->Y
+               }")
+coordinates(dag2)<- list(x=c(X=0,Y=2,Z=1,A=2) ,y=c(X=1,Y=1,Z=0,A=0) )
+drawdag(dag2)
+```
+We see two backdoor paths for the causal influence of X on Y, X->Z->Y and x->Z<-A->Y. Note that in our second path Z is a collider so it is closed. Our first path feeds the impact from X to Z to Y so we can keep it open to see the total causal influence.
+
+###Third Dag
+```{r}
+dag3<- dagitty("dag{
+               X->Y
+               X->Z<-Y
+               X<-A->Z<-Y
+               }")
+coordinates(dag3 )<- list(x=c(X=0,Y=2,Z=1,A=0) ,y=c(X=1,Y=1,Z=0,A=0) )
+drawdag(dag3)
+
+```
+We have two backdoor paths for the causal influence of X on Y, X->Z<-Y and x<-A->Z<-Y. Note that Z is a collider for both so they are both closed. Therefore, we do not need to condition anything.
+
+
+###Fourth Dag
+```{r}
+dag4<- dagitty("dag{
+               X->Y
+               X->Z->Y
+               X<-A->Z->Y
+               }")
+coordinates(dag4)<- list(x=c(X=0,Y=2,Z=1,A=0) ,y=c(X=1,Y=1,Z=0,A=0) )
+drawdag(dag4)
+
+```
+We have two backdoor paths for causal influence of X on Y, X<-A->Z->Y and X->Z->Y. Both of which are open. Note that we would want to condition on A in order to close the first path but keep the second one open for the total causal influence from X to Y.
+
+
+###Problems
+All three problems below are based on the same data. The data in data(foxes) are 116 foxes from
+30 different urban groups in England. These foxes are like street gangs. Group size varies from 2 to
+8 individuals. Each group maintains its own urban territory. Some territories are larger than others.
+The area variable encodes this information. Some territories also have more avgfood than others.
+We want to model the weight of each fox. For the problems below, assume the following DAG:
+
+
+```{r}
+
+foxdag <- dagitty("dag{
+                  avgfood <- area
+                  weight <- avgfood
+                  weight <- groupsize
+                  groupsize <- avgfood
+                  }")
+coordinates(foxdag )<- list(x=c(avgfood=0,weight=1,groupsize=2,area=1) ,y=c(avgfood=1,weight=3,groupsize=1,area=0) )
+drawdag(foxdag)
+
+```
+
+##Problem 6H3
+ Use a model to infer the total causal influence of area on weight. Would increasing the area available to each fox make it heavier (healthier)? You might want to standardize the variables. Regardless, use prior predictive simulation to show that your model's prior predictions stay within the
+possible outcome range.
+
+Note that by assuming the dag provided, we have two open paths that show the total causal influence of area on weight and do not need to condition on anything.
+
+```{r}
+data("foxes")
+data= foxes
+
+data$standard_area = scale(data$area)
+data$standard_weight = scale(data$weight)
+mean(data$standard_area)
+
+#Build Model
+model.6h3 <-quap(
+  alist(
+    standard_weight~dnorm(mu,sigma),
+    mu <- a +bA*standard_area,
+    a~dnorm(0,0.5),
+    bA~dnorm(0,0.5),
+    sigma~dexp(1)
+  ),data=data
+)
+
+precis(model.6h3,depth = 2)
+plot(precis(model.6h3,depth = 2))
+
+#Prior Predicitive Check
+prior <- extract.prior( model.6h3 )
+xseq <- c(-10,10)
+mu <- link( model.6h3  , post=prior , data=list(standard_area=xseq) )
+
+plot( NULL , xlim=xseq , ylim=xseq, xlab='Area',ylab='Weight' )
+title('Prior Predication SImulation for Weight')
+for ( i in 1:50 ) lines( xseq , mu[i,] , col=col.alpha("blue",0.3))
+
+```
+We can see that utilizing tight priors help our model's prior predictions stay within the possible outcome range.
+
+##Problem 6H4
+Now infer the causal impact of adding food to a territory. Would this make foxes heavier?
+Which covariates do you need to adjust for to estimate the total causal influence of food?
+
+We can use our dag to see that there are two paths, average food ->group size ->weight and average food -> weight. Note that the second is direct while the first flows one way therefore, we do not need to condition on anything and can build our model as follows.
+```{r}
+data$standard_food = scale(data$avgfood)
+
+model.6h4 <-quap(
+  alist(
+    standard_weight~dnorm(mu,sigma),
+    mu <- a +bF*standard_food,
+    a~dnorm(0,0.5),
+    bF~dnorm(0,0.5),
+    sigma~dexp(1)
+  ),data=data
+)
+
+precis(model.6h4,depth = 2)
+plot(precis(model.6h4,depth = 2))
+```
+Note that because our coefficent for average food is quite close to 0 and negative. Therefore, we can see that there is not much causal between average food and weight.
+
+##Problem 6H5
+Now infer the causal impact of group size. Which covariates do you need to adjust for? Looking
+at the posterior distribution of the resulting model, what do you think explains these data? That is,
+can you explain the estimates for all three problems? How do they go together?
+
+For this model, we have one direct path, group size -> weight, and a backdoor path, groupsize <-average food->weight, where the average food is a fork therefore, we condition on average food to close that path.
+
+```{r}
+data$standard_size = scale(data$groupsize)
+
+model.6h5 <-quap(
+  alist(
+    standard_weight~dnorm(mu,sigma),
+    mu <- a +bS*standard_size+bF*standard_food,
+    a~dnorm(0,0.5),
+    bF~dnorm(0,0.5),
+    bS~dnorm(0,0.5),
+    sigma~dexp(1)
+  ),data=data
+)
+
+precis(model.6h5,depth = 2)
+plot(precis(model.6h5,depth = 2))
+```
+When we look at the posterior distribution of the resulting model, we can clearly see that the average food has a positive causal impact while group size has a negative causal impact. However, note that when we had looked at average food, we hadnt found much of an impact so it appears to be that the group size and average food cancel each other out and makes it difficult to find the causal impact of average food when not considering group size.
+
+#Access to clean water and infant mortality
+```{r}
+options(PACKAGE_MAINFOLDER="C:/Users/...")
+data <- read.csv(file = 'C:/Users/Rebec/Documents/University of Washington/Spring 2022/CSSS564/HomeworkFive/qog_jan16.csv')
+colnames(data) <- c('Country','InfantMortality','WaterAccess','ElectricityAccess')
+
+head(data)
+
+X_i=data$WaterAccess
+Y_i=data$InfantMortality
+Z_i=data$ElectricityAccess
+```
+
+
+##2.1 Linear Model
+
+###Part a
+Below we define our model. Note that in a linear model, the intercept represented expected infant mortality when a country has the average access to clean water supply. Slope represents how much we expect to change in infant mortality in response to unit increase of clean water. Meanwhile, the stardard deviation represents the majority of possible ranges for infant mortality in response to the access to drinking water.I chose smax to equal 20 in order to cover the range of the data. For sb, I chose a weakly informative prior with a normal distribution from 0 to 10. Additionally, I chose mb to have a prior of a normal distribution from 0 to 25 which is around the mean of Water access.
+
+```{r}
+#Defining Model 
+
+linear_model_code <- "
+data{
+D <- dim(x)
+n <- D[1]
+p <- D[2]
+}
+model{
+for(i in 1:n){
+# likelihood
+y[i] ~ dnorm(mu[i], tau)
+# posterior predictive
+ynew[i] ~ dnorm(mu[i], tau)
+}
+# conditional mean using matrix algebra
+for (i in 1:n) {
+mu[i] = x[i,2]*beta + alpha
+}
+alpha ~ dnorm(mb[1], pow(sb[1], -2))
+beta ~ dnorm(mb[2], pow(sb[2], -2))
+sigma ~ dunif(0, smax)
+tau <- pow(sigma, -2)
+}
+"
+data$WaterAccess_centered <- data$WaterAccess - mean(data$WaterAccess)
+x <- cbind(1, data$WaterAccess_centered)
+y <- data$InfantMortality
+mean(data$InfantMortality)
+
+mb <- c(25, 0)
+sb <- c(10,10)
+m1 <- jags.model(file = textConnection(linear_model_code),
+                 data = list(x = x,
+                             y = y,
+                             mb = mb,
+                             sb = sb,
+                             smax = 20))
+
+```
+
+#Part B
+```{r}
+#Simulating Samples 
+
+n <- length(data$InfantMortality)
+nsim=200
+xbar<-mean(data$WaterAccess)
+# extract posterior samples
+samples <- coda.samples(m1, variable.names = c("alpha", "beta", "sigma","ynew","mu"), n.iter = nsim)
+
+# here's our posterior mean and credible intervals
+samples <- as.data.frame(samples[[1]])
+
+precis(samples, depth = 2, prob = .95)[c(1,2,187),1:4]
+
+sim_ynew <- samples[, 188:dim(samples)[2]]
+sim_mu <- samples[, 3:186]
+ynew.PI <- apply(sim_ynew, 2, PI, prob = .95)
+mu.CI <- apply(sim_mu, 2, PI, prob = 0.95)
+```
+
+#Part c
+```{r}
+ggplot(data, aes(y = InfantMortality, x = WaterAccess_centered)) +
+geom_point() +
+geom_ribbon(aes(ymin = ynew.PI[1,], ymax = ynew.PI[2,],x=WaterAccess_centered), fill = alpha("yellow", .5)) +
+  geom_ribbon(aes(ymin = mu.CI[1,], ymax = mu.CI[2,], x=WaterAccess_centered), fill = alpha("red", .3)) +
+  geom_line(aes(y = colMeans(sim_mu), x = WaterAccess_centered), col = "black")  +
+  theme_bw()
+```
+#Part D
+```{r}
+n <- length(data$InfantMortality)
+nsim=200
+xbar<-mean(data$WaterAccess)
+
+#Posterior Predictive Check
+ynew  <- sapply(1:n, function(i)
+  with(samples, rnorm(nsim, alpha + beta*(x[i]), sigma)))
+
+dens(data$InfantMortality, adj = 1,ylim = c(0, 0.065))
+for(i in 1:200){
+  dens(ynew[i, ], adj =1, add = T, col = col.alpha("red", alpha = .2))
+}
+dens(data$InfantMortality, adj = 1, ylim = c(0, 0.06), lwd = 2, add = T)
+legend("topright", legend = c("ynew", "obs"),
+       lty = c(1, 1), col = c("red", "black"))
+mtext("Posterior Predictive Check - Infant Mortality ~ Acess to Clean Water")
+```
+
+##Part e
+Partly, because country can be a cofounders in determing acess to clean water or directly towards infant mortaility. While there is some causal influence, it would not be totoal causal influence as we need to consider possible backdoor paths. See dag below:
+
+```{r}
+waterdag <- dagitty("dag{
+                  InfantMortality <- WaterSupply <- Country
+                  InfantMortality<- Country
+                  InfantMortality <-Electricity <- Country
+                  
+                  }")
+coordinates(waterdag )<- list(x=c(Country=0,Electricity=1,InfantMortality=1,WaterSupply=0) ,y=c(Country=0,Electricity=0,InfantMortality=1,WaterSupply=1) )
+drawdag(waterdag)
+```
+#Part f: Model using both X,Z
+
+```{r}
+#Defining Model 
+
+multiple_linear_model_code <- "
+  data{
+    D <- dim(x)
+    n <- D[1]
+    p <- D[2]
+  }
+  model{
+    
+   for(i in 1:n){
+      # likelihood
+      y[i] ~ dnorm(mu[i], tau)
+      
+      # posterior predictive
+      ynew[i] ~ dnorm(mu[i], tau)
+   }
+    
+    # conditional mean using matrix algebra
+    mu <- x %*% beta
+    
+    for(j in 1:p){
+      beta[j] ~ dnorm(mb[j], pow(sb[j], -2))
+    }
+    sigma ~ dunif(0, smax)
+    tau <- pow(sigma, -2)
+  }
+"
+data$WaterAccess_centered <- data$WaterAccess - mean(data$WaterAccess)
+data$Electricity_centered <- data$ElectricityAccess - mean(data$ElectricityAccess)
+
+x <- cbind(1, data$WaterAccess_centered,data$Electricity_centered)
+y <- data$InfantMortality
+
+mean(data$InfantMortality)
+
+mb <- c(25, 10,10,10)
+sb <- c(20,20,20,20)
+m1.2 <- jags.model(file = textConnection(multiple_linear_model_code),
+                 data = list(x = x,
+                             y = y,
+                             mb = mb,
+                             sb = sb,
+                             smax = 20))
+
+```
+
+```{r}
+#Simulating Samples 
+
+n <- length(data$InfantMortality)
+nsim=200
+xbar<-mean(data$WaterAccess)
+# extract posterior samples
+samples <- coda.samples(m1.2, variable.names = c( "beta", "sigma","ynew","mu"), n.iter = nsim)
+
+# here's our posterior mean and credible intervals
+samples <- as.data.frame(samples[[1]])
+
+precis(samples, depth = 2, prob = .95)[c(1,2,3,188),1:4]
+
+sim_ynew <- samples[, 189:dim(samples)[2]]
+sim_mu <- samples[, 4:187]
+ynew.PI <- apply(sim_ynew, 2, PI, prob = .95)
+mu.CI <- apply(sim_mu, 2, PI, prob = 0.95)
+```
+
+Note that we see the coefficent for water access decreased for which implies that the adjustment for electricity access implies that it is a confounder.
+
+```{r}
+waterdag <- dagitty("dag{
+                  InfantMortality <- WaterSupply <- Country
+                  InfantMortality<- Country
+                  InfantMortality <-Electricity <- Country
+                  
+                  }")
+coordinates(waterdag )<- list(x=c(Country=0,Electricity=1,InfantMortality=1,WaterSupply=0) ,y=c(Country=0,Electricity=0,InfantMortality=1,WaterSupply=1) )
+drawdag(waterdag)
+```
+
+##2.2 Quadratic Model
+
+```{r}
+quadratic_model_code <- "
+data{
+D <- dim(x)
+n <- D[1]
+p <- D[2]
+}
+model{
+for(i in 1:n){
+# likelihood
+y[i] ~ dnorm(mu[i], tau)
+# posterior predictive
+ynew[i] ~ dnorm(mu[i], tau)
+}
+# conditional mean using matrix algebra
+mu <- x %*% beta
+for(j in 1:p){
+beta[j] ~ dnorm(mb[j], pow(sb[j], -2))
+}
+sigma ~ dunif(0, smax)
+tau <- pow(sigma, -2)
+}
+"
+data$WaterAccess_centered <- data$WaterAccess - mean(data$WaterAccess)
+data$WaterAccess_centered_2 <-data$WaterAccess_centered^2
+x <- cbind(1, data$WaterAccess_centered,data$WaterAccess_centered_2)
+
+y <- data$InfantMortality
+mean(data$InfantMortality)
+
+mb <- c(25, 0, 0, 0)
+sb <- c(10, 10, 10, 10)
+m2 <- jags.model(file = textConnection(quadratic_model_code),
+                 data = list(x = x,
+                             y = y,
+                             mb = mb,
+                             sb = sb,
+                             smax = 20))
+
+
+```
+
+#Part B
+```{r}
+#Simulating Samples 
+
+n <- length(data$InfantMortality)
+nsim=200
+xbar<-mean(data$WaterAccess)
+# extract posterior samples
+samples <- coda.samples(m2, variable.names = c( "beta", "sigma","ynew","mu"), n.iter = nsim)
+
+# here's our posterior mean and credible intervals
+samples <- as.data.frame(samples[[1]])
+
+sim_ynew <- samples[, 189:dim(samples)[2]]
+sim_mu <- samples[, 4:187]
+ynew.PI <- apply(sim_ynew, 2, PI, prob = .95)
+mu.CI <- apply(sim_mu, 2, PI, prob = 0.95)
+```
+
+
+#Part B
+```{r}
+ggplot(data, aes(y = InfantMortality, x = WaterAccess_centered)) +
+geom_point() +
+geom_ribbon(aes(ymin = ynew.PI[1,], ymax = ynew.PI[2,],x=WaterAccess_centered), fill = alpha("yellow", .5)) +
+  geom_ribbon(aes(ymin = mu.CI[1,], ymax = mu.CI[2,], x=WaterAccess_centered), fill = alpha("red", .3)) +
+  geom_line(aes(y = colMeans(sim_mu), x = WaterAccess_centered), col = "black")  +
+  theme_bw()
+```
+
+#Part C
+```{r}
+n <- length(data$InfantMortality)
+nsim=200
+xbar<-mean(data$WaterAccess)
+
+#Posterior Predictive Check
+ynew  <- sapply(1:n, function(i)
+  with(samples, rnorm(nsim, `beta[1]` + `beta[2]`*(x[i]) + `beta[2]`*(x[i])^2, sigma)))
+
+dens(data$InfantMortality, adj = 1,ylim = c(0, 0.065))
+for(i in 1:200){
+  dens(ynew[i, ], adj =1, add = T, col = col.alpha("red", alpha = .2))
+}
+dens(data$InfantMortality, adj = 1, ylim = c(0, 0.06), lwd = 2, add = T)
+legend("topright", legend = c("ynew", "obs"),
+       lty = c(1, 1), col = c("red", "black"))
+mtext("Posterior Predictive Check - Infant Mortality ~ Acess to Clean Water")
+```
+
+#Part D:
+We cannot because by the definition of mulitple regression automatically assumpes ajudgment for the other regression coefficents.
+```{r}
+precis(samples, depth = 2, prob = .95)[c(1,2,3,188),1:4]
+```
+#Part E
+```{r}
+m2.2e <- "
+model{
+for(i in 1:n){
+# likelihood
+y[i] ~ dnorm(mu[i],tau)
+  
+#model x
+x[i] ~ dnorm(mu_x,taux)
+  
+mu[i] <-  beta[1] + beta[2]*x[i] + beta[3]*x[i]^2 
+  
+}
+
+#Priors on x
+mu_x ~ dnorm(mu_m,taum)
+sigmax ~ dunif(0,smax)
+taum <- 1/sm^2
+taux <- 1/sigmax^2
+  
+APD <-  beta[2] + 2*beta[3]*mu_x
+  
+#Priors for model
+for(j in 1:3){
+beta[j] ~ dnorm(mb[j],taub[j])
+}
+  
+sigma ~ dunif(0,smax)
+tau <- 1/sigma^2
+taub <- 1/sb^2
+}
+"
+
+mb = c(1,0,0)
+sb = c(10,10,10)
+
+
+model.2e <- jags.model(file=textConnection(m2.2e_code),
+                    data=list(
+                      y = y,
+                      mb = mb,
+                      sb = sb,
+                      smax = 20,
+                      x = x,
+                      mu_m = 0,
+                      sm = 30,
+                      n = length(x)))
+
+samples <- coda.samples(model.2e,variable.names=c('APD'),
+                            n.iter=1e2)
+
+samples.df <- data.frame(samples[[1]])
+
+(samples.df %>% precis(prob=.95))[,1:4]
+```
+
+#Part F
+```{r}
+bayes_boot = function(beta1, beta2,x){
+n = length(beta1)
+m = length(x)
+psi_post = c()
+for(i in 1:n){
+  bb_weights = c(rdirichlet( 1, rep(1, m) ))
+  E_x = sum(bb_weights*x)
+  psi_post[i] = beta1[i] + 2*beta2[i]*E_x 
+  }
+return(psi_post)
+}
+samples <- coda.samples(m2.2e,variable.names = c('beta','mu_x'), n.iter=1e2)
+samples.df <- data.frame(samples[[1]])
+
+betas <-  samples.df[,2:3]
+mu_x <- samples.df[,4]
+
+(bayes_boot(betas[,1],betas[,2],x) %>% precis(prob=.95))[,1:4]
+```
+Note we find that the results of the APD prove to be very similar to those coefficents and ranges of the linear regression model in part 2.1.
+
+# Covariate Selection
+Below we estimate the average treatment effect of D on Y for each model data provided.
+
+##Model One: 
+```{r}
+options(PACKAGE_MAINFOLDER="C:/Users/...")
+d1 <- read.csv(file = 'C:/Users/Rebec/Documents/University of Washington/Spring 2022/CSSS564/HomeworkFive/model1.csv')
+head(d1)
+
+d <- d1$d
+y <- d1$y
+x1 <- d1$x1
+
+#Fully Interacted Model
+model.3a_code<-"
+model{
+
+for(i in 1:n){
+y[i]~dnorm(mu[i],tauy)
+mu[i]<-alpha+betaD*d[i]+beta1*x1[i]+beta1d*x1[i]*d[i]
+
+}
+betaD~dunif(0,bmax)
+beta1~dunif(0,bmax)
+beta1d~dunif(0,bmax)
+alpha~dunif(0,bmax)
+sy~dunif(0,5)
+tauy<-1/sy^2
+}
+"
+
+model.3a <- jags.model(file=textConnection(model.3a_code),
+                  data=list(y = y,
+                            x1 = x1,
+                            d = d,
+                            n = nrow(m1),
+                            bmax = 10
+                            ))
+
+samples<-coda.samples(model.3a, variable.names = c('alpha','betaD','beta1','beta1d'),n.iter = nsim)
+samples.df<-data.frame(samples[[1]])
+(samples.df %>% precis(prob=.95))[,1:4]
+
+#Bayesian Bootstrap
+bayes_boot = function(mu_a1, mu_a0){ n = nrow(mu_a1)
+M = ncol(mu_a1)
+psi_post = numeric(M)
+for(m in 1:M){
+bb_weights = rdirichlet( 1, rep(1, n) )
+psi_post[m] = sum(bb_weights*( mu_a1[, m] - mu_a0[ , m] ))
+}
+  return(psi_post)
+}
+
+N <- nrow(m1)
+M <- nsim
+
+mu_a1 <- matrix(0, nrow = N, ncol = M)
+mu_a0 <- matrix(0, nrow = N, ncol = M)
+
+for (i in 1:N) {
+  mu_a1[i,] <- samples.df$betaD + samples.df$beta1*x1[i] + samples.df$beta1d*x1[i]
+  mu_a0[i,] <- samples.df$beta1*x1[i]
+}
+
+ATE.samples <- bayes_boot(mu_a1,mu_a0)
+(ATE.samples %>% precis(prob=.95))[,1:4]
+hist(ATE.samples)
+```
+
+#Part B
+```{r}
+d2 <- read.csv(file = 'C:/Users/Rebec/Documents/University of Washington/Spring 2022/CSSS564/HomeworkFive/model2.csv')
+
+d<-d2$d
+y<-d2$y
+x1<-d2$x1
+x2<-d2$x2
+
+#Define Model
+m.3b <- "
+model{
+
+for(i in 1:n){
+y[i] ~ dnorm(mu[i],tauy)
+
+mu[i] <- alpha + betad*d[i] + beta1*x1[i] + beta2*x2[i] + beta1d*x1[i]*d[i] + beta12*x1[i]*x2[i] + beta2d*x2[i]*d[i]
+
+}
+betad ~ dunif(0,bmax)
+beta1 ~ dunif(0,bmax)
+beta2 ~ dunif(0,bmax)
+beta1d ~ dunif(0,bmax)
+alpha ~ dunif(0,bmax)
+beta12 ~ dunif(0,bmax)
+beta2d ~ dunif(0,bmax)
+
+sy ~ dunif(0,5)
+
+tauy <- 1/sy^2
+}
+"
+
+model.3b <- jags.model(file=textConnection(m.3b),
+                  data=list(y = y,
+                            x1 = x1,
+                            x2 = x2,
+                            d = d,
+                            n = nrow(m2),
+                            bmax = 10
+                            ))
+
+samples <- coda.samples(model.3b, variable.names = c('alpha','betad','beta1','beta2','beta1d','beta12','beta2d'),n.iter = nsim)
+samples.df <- data.frame(samples[[1]])
+(samples.df %>% precis(prob=.95))[,1:4]
+
+N <- nrow(m2)
+M <- nsim
+
+mu_a1 <- matrix(0, nrow = N, ncol = M)
+mu_a0 <- matrix(0, nrow = N, ncol = M)
+
+for (i in 1:N) {
+  mu_a1[i,] <- samples.df$alpha + samples.df$betad + samples.df$beta1*x1[i] + samples.df$beta2*x2[i] + samples.df$beta1d*x1[i] + samples.df$beta12*x1[i]*x2[i] + samples.df$beta2d*x2[i]
+    
+  mu_a0[i,] <- samples.df$alpha + samples.df$beta1*x1[i] + samples.df$beta2*x2[i] + samples.df$beta12*x1[i]*x2[i]
+}
+ATE.samples <- bayes_boot(mu_a1,mu_a0)
+(ATE.samples %>% precis(prob=.95))[,1:4]
+hist(ATE.samples)
+
+```
+
+
+#Part C
+
+```{r}
+d3 <- read.csv(file = 'C:/Users/Rebec/Documents/University of Washington/Spring 2022/CSSS564/HomeworkFive/model3.csv')
+
+d<-m3$d
+y<-d3$y
+x1<-d3$x1
+
+model.3c <- "
+model{
+
+for(i in 1:n){
+y[i] ~ dnorm(mu[i],tauy)
+mu[i] <- alpha + betad*d[i] + beta1*x1[i] + beta1d*x1[i]*d[i]
+
+}
+betad ~ dunif(0,bmax)
+beta1 ~ dunif(0,bmax)
+beta1d ~ dunif(0,bmax)
+alpha ~ dunif(0,bmax)
+
+sy ~ dunif(0,5)
+tauy <- 1/sy^2
+}
+"
+
+m3c <- jags.model(file=textConnection(model.3c),
+                  data=list(y = y,
+                            x1 = x1,
+                            d = d,
+                            n = nrow(m1),
+                            bmax = 10
+                            ))
+
+samples <- coda.samples(m3c, variable.names = c('alpha','betad','beta1','beta1d'),n.iter = nsim)
+
+samples.df <- data.frame(samples[[1]])
+
+(samples.df %>% precis(prob=.95))[,1:4]
+
+N <- nrow(m3)
+M <- nsim
+
+mu_a1 <- matrix(0, nrow = N, ncol = M)
+mu_a0 <- matrix(0, nrow = N, ncol = M)
+for (i in 1:N) {
+  mu_a1[i,] <- samples.df$alpha + samples.df$betad + samples.df$beta1*x1[i] + samples.df$beta1d*x1[i]
+  mu_a0[i,] <- samples.df$alpha + samples.df$beta1*x1[i]
+}
+
+ATE.samples <- bayes_boot(mu_a1,mu_a0)
+(ATE.samples %>% precis(prob=.95))[,1:4]
+hist(ATE.samples)
+```

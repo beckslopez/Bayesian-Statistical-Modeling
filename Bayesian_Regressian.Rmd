@@ -1,0 +1,259 @@
+---
+title: "Problem Set 2: Bayesian Binomial Models and Linear Regression"
+subtitle: By Becks Lopez
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+#Setting up Necessary Packages 
+```{r}
+library(rethinking)
+library(stringr)
+```
+
+
+# Chapter 3: 
+Using the data we sampled live during Lecture 2, namely (W W W W L W W W L), reproduce the posterior predictive check of the number of switches found in page 67, Figure 3.7 (the second figure).  
+```{r}
+# grid values for Pw
+grid.size <- 1000
+
+# sequence of Pw's
+Pw <- seq(0, 1, length = grid.size)
+
+# prior
+prior <- rep(1, grid.size)
+
+# Observed data
+wi <- c(1, 1, 1, 1, 0, 1, 1, 1, 0)
+
+#Number of W observed
+w <- sum(wi)
+
+#Data size
+n <- length(wi)
+
+## Update with first observation
+
+# likelihood
+likelihood <- dbinom(w, size = n, prob = Pw)
+
+# posterior
+unst.post <- prior*likelihood
+post<- unst.post/sum(unst.post)
+
+#Sample from a grid-approximate posterior
+samples <- sample( Pw , prob=post , size=1e4,replace=TRUE)
+
+
+#Model Checking
+wi.posterior <-rbinom(1e4*9,size=1,prob=samples)
+
+#Reshape samples
+dim(wi.posterior) <-c(1e4,9)
+#Count the number of switches between W to L and vice versa
+switch.posterior<-apply(wi.posterior,1,function(x) sum(abs(diff(x))))
+
+simplehist(switch.posterior)
+```
+Note that in the data sampled in class, we had three switches (W W W W L W W W L) where we went from W to L, L to W, and W to L.
+# Chapter 4:
+
+##Problem 4E1
+In the model definition, the likelihood is:
+$$y_i \sim \text{Normal}(\mu, \sigma)$$
+##Problem 4E2
+There are two paramters in the posterior distribution, $\mu, \sigma$.
+##Problem 4E3
+We can use Bayes theorem to define the posterior distribution of the model above:
+$$\text{Pr}(\mu, \sigma | y)=\frac{\prod_i\text{Normal}(y_i| \mu,\sigma)\text{Normal}(\mu| 0,10)\text{Exponential}(\sigma| 1)}{\int \int \prod_i\text{Normal}(y_i| \mu,\sigma)\text{Normal}(\mu| 0,10)\text{Exponential}(\sigma| 1) d\mu d\sigma}$$
+##Problem 4E4
+The following line is the linear model:
+$$\mu _i = \alpha +\beta x_i$$
+##Problem 4E5
+There are now three parameters in the posterior distribution: $\alpha,\beta, \sigma$.
+
+##Problem 4M1
+Here we simulate observed $y$ values from the prior for the model provided.
+```{r}
+sample_mu <- rnorm(1e4, 0,10)
+sample_sigma<- rexp(1e4,1)
+prior_y<-rnorm(1e4,sample_mu,sample_sigma)
+dens(prior_y)
+```
+
+##Problem 4M7
+```{r}
+data(Howell1); d <- Howell1; d2 <- d[ d$age >= 18 , ]
+# define the average weight, x-bar
+xbar <- mean(d2$weight)
+par(mfrow=c(1,2))
+
+# fit model
+m4.3 <- quap(
+  alist(height ~ dnorm( mu , sigma ) ,mu <- a + b*( weight - xbar ) ,a ~ dnorm( 178 , 20 ) ,b ~ dlnorm( 0 , 1 ) ,sigma ~ dunif( 0 , 50 )) , data=d2 )
+precis( m4.3 )
+round( vcov( m4.3 ) , 3 )
+plot( height ~ weight , data=d2 , col=rangi2 )
+
+post <- extract.samples( m4.3 )
+a_map <- mean(post$a)
+b_map <- mean(post$b)
+curve( a_map + b_map*(x - xbar) , add=TRUE )
+
+
+# fit model
+m4.3.2 <- quap(
+alist(height ~ dnorm( mu , sigma ) ,  mu <- a + b*( weight ) ,a ~ dnorm( 178 , 20 ) ,b ~ dlnorm( 0 , 1 ) ,sigma ~ dunif( 0 , 50 )) , data=d2 )
+precis( m4.3.2 )
+round( vcov( m4.3.2 ) , 3 )
+
+plot( height ~ weight , data=d2 , col=rangi2 )
+post <- extract.samples( m4.3.2 )
+a_map <- mean(post$a)
+b_map <- mean(post$b)
+curve( a_map + b_map*(x) , add=TRUE )
+```
+While the posterior predication appear to be quite similar from the plots,there is greater covariance (-0.79) between our values for $a$ and $b$ in the model that did not center its data.
+
+##Problem 4H1
+For this problem, I used the model created for 4H2 in order to prediict expected height in this one.
+```{r}
+indiv<-c(1:5)
+weight<-c(46.95,43.72,64.78,32.59,54.63)
+
+
+data(Howell1); d1 <- Howell1; d2 <- d[ d$age < 18 , ]
+xbar <- mean(d2$weight)
+
+mu=mean(d2$height)
+sigma=sd(d2$height)
+
+m4.2 <- quap(
+alist(
+height ~ dnorm( mu , sigma ) ,
+mu <- a + b*( weight - xbar ) ,
+a ~ dnorm( 178 , 20 ) ,
+b ~ dlnorm( 0 , 1 ) ,
+sigma ~ dunif( 0 , 50 )
+) , data=d2 )
+
+post <- extract.samples(m4.2) 
+mu.link <- function(weight) post$a + post$b*( weight - xbar )
+weight.seq<-c(46.95,43.72,64.78,32.59,54.63)
+mu <- sapply( weight.seq , mu.link )
+mu.mean <- apply( mu , 2 , mean )
+mu.CI <- apply( mu , 2 , PI , prob=0.89 )
+sim.height <- sim( m4.2 , data=list(weight=weight.seq) )
+#str(sim.height)
+
+height.PI <- apply( sim.height , 2 , PI , prob=0.89 )
+
+height.low<- height.PI[1,]
+height.high<-height.PI[2,]
+
+df<-data.frame(indiv,weight.seq,mu.mean,height.low,height.high)
+df$Inter<-str_c("(",trunc(df$height.low*10^2)/10^2,",",trunc(df$height.high*10^2)/10^2,")")
+df=within(df, rm(height.low,height.high))
+colnames(df) <- c("Individual","Weight","Expected Height"," 89% Interval")
+df
+```
+
+##Problem 4H2
+Select out all the rows in the Howell1 data with ages below 18 years of age. If you do it right,
+you should end up with a new data frame with 192 rows in it.
+(a) Fit a linear regression to these data, using quap. Present and interpret the estimates. For
+every 10 units of increase in weight, how much taller does the model predict a child gets?
+(b) Plot the raw data, with height on the vertical axis and weight on the horizontal axis. Superimpose the MAP regression line and 89% interval for the mean. Also superimpose the 89% interval
+for predicted heights.
+(c) What aspects of the model fit concern you? Describe the kinds of assumptions you would
+change, if any, to improve the model. You don't have to write any new code. Just explain what the
+model appears to be doing a bad job of, and what you hypothesize would be a better model.
+```{r}
+#Select out all the rows in the Howell1 data with ages below 18 years of age
+xbar <- mean(d2$weight)
+data(Howell1); d2 <- Howell1; d2 <- d[ d$age < 18 , ]
+
+mu=mean(d2$height)
+sigma=sd(d2$height)
+
+#Fit a linear regression to these data
+m4.2 <- quap(
+alist(
+height ~ dnorm( mu , sigma ) ,
+mu <- a + b*( weight - xbar ) ,
+a ~ dnorm( 178 , 20 ) ,
+b ~ dlnorm( 0 , 1 ) ,
+sigma ~ dunif( 0 , 50 )
+) , data=d2 )
+
+post <- extract.samples(m4.2) 
+mu.link <- function(weight) post$a + post$b*( weight - xbar )
+weight.seq <- seq( from=0 , to=200 , by=10 )
+mu <- sapply( weight.seq , mu.link )
+mu.mean <- apply( mu , 2 , mean )
+mu.CI <- apply( mu , 2 , PI , prob=0.89 )
+sim.height <- sim( m4.2 , data=list(weight=weight.seq) )
+#str(sim.height)
+
+height.PI <- apply( sim.height , 2 , PI , prob=0.89 )
+# plot raw data
+plot( height ~ weight , d2 , col=col.alpha(rangi2,0.5) )
+# draw MAP line
+lines( weight.seq , mu.mean )
+# draw PI region for simulated heights
+shade( height.PI , weight.seq )
+
+#View values for linear model
+precis(m4.2)
+```
+Note that we find our slope for our model and multiple by 10 to see the expected increase in height for every 10 units of increase in weight in a child. In the plot, we can see that we have increased points outside the intervals along the ends. This leads me to think that an increased polynomial model may produce better predications
+
+
+##Problem 4H3
+
+```{r}
+data(Howell1); d3 <- Howell1
+dim(d3)
+m4h3 <- quap(
+alist(
+height ~ dnorm( mu , sigma ) ,
+mu <- a + b*log(weight) ,
+a ~ dnorm( 178 , 20 ) ,
+b ~ dlnorm( 0 , 1 ) ,
+sigma ~ dunif( 0 , 50 )
+) , data=d3 )
+
+m4h3
+```
+We get a slope of $46.82$ which implies that for each exponential increase of weight we expect a 46.82 increase in height.
+```{r}
+
+
+mu=mean(d3$height)
+sigma=sd(d3$height)
+
+
+post <- extract.samples(m4h3) 
+mu.link <- function(weight) post$a + post$b*log(weight)
+weight.seq <- seq( from=0 , to=200 , by=1 )
+mu <- sapply( weight.seq , mu.link )
+mu.mean <- apply( mu , 2 , mean )
+mu.CI <- apply( mu , 2 , PI , prob=0.89 )
+sim.height <- sim( m4h3 , data=list(weight=weight.seq) )
+#str(sim.height)
+
+height.PI <- apply( sim.height , 2 , PI , prob=0.97 )
+# plot raw data
+plot( height ~ weight , d3 , col=col.alpha(rangi2,0.5) )
+#Impose the 97% interval for predicted heights.
+shade( height.PI , weight.seq )
+#Impose the 97% interval for the mean
+shade(mu.CI,weight.seq,col = "red")
+#Impose the predicted mean height as a function of weight
+lines( weight.seq , mu.mean )
+
+
+```
+

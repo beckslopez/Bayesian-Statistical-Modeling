@@ -1,0 +1,226 @@
+---
+title: "Problem Set Six: Bayesian Bootstrapping and Markov Chain Monte Carlo"
+subtitle: "by Rebecca A Lopez"
+output: html_notebook
+---
+
+###Package Installations
+```{r}
+# install.packages("readxl")
+library("readxl")
+library(rethinking)
+library(dagitty)
+library(rjags)
+library(betareg)
+library(brms)
+library(tidyverse)
+load.module("glm")
+#library(tidygraph)
+```
+
+###Import Data
+```{r}
+options(PACKAGE_MAINFOLDER="C:/Users/...")
+data <- read.csv(file = 'C:/Users/Rebec/Documents/University of Washington/Spring 2022/CSSS564/HomeworkFive/qog_jan16.csv')
+colnames(data) <- c('Country','InfantMortality','WaterAccess','ElectricityAccess')
+
+head(data)
+
+```
+#Problem 1: 
+We are given the following model:
+$\begin{align}
+Y_i^*|X_i,\beta,\phi &\sim \text{Beta}(a_i,b_i)\\
+\text{logit}(\mu_i)  &=\beta_0+\beta_1X_i\\
+a_i &= \mu_i \times \phi \\
+b_i &= (1-\mu_i) \times \phi \\
+\end{align}$
+
+We define our model as follows with 4 markov chains, a burn in periof of 1000 iterations with 3000 iterations for each chain.
+```{r}
+#Define Model
+logit_model_code <- "
+data{
+D <- dim(x)
+n <- D[1]
+}
+model{
+for(i in 1:n){
+# likelihood
+y[i] ~ dbeta(mu[i]*phi, (1-mu[i])*phi)
+# posterior predictive
+ynew[i]  ~ dbeta(mu[i]*phi, (1-mu[i])*phi)
+
+logit(mu[i]) = x[i,2]*beta1 + beta0*x[i,1]
+}
+beta0 ~ dnorm(0,5)
+beta1 ~ dnorm(0,5)
+phi ~ dunif(0, smax)
+
+}
+"
+data$WaterAccess_centered <- data$WaterAccess - mean(data$WaterAccess)
+X_i <- cbind(1, data$WaterAccess_centered)
+Y_i=data$InfantMortality
+Y_i=Y_i/1000
+
+m1 <- jags.model(file = textConnection(logit_model_code),
+                 data = list(x = X_i,
+                             y = Y_i,
+                             smax = 500),
+                 n.chains = 4,
+                 n.adapt=1000)
+
+```
+
+#Problem 2 
+We extract the posterior samples. Note that our effective sample size tend to at around 3000 and above which implies that our chosen sample size was a pretty good predication to match precision. Our traceplots imply that our parameters will converge for our model as desired. Lastly, we note our Gelman-Rubin diagnostic is 1 for each of our parameters which tells us that that convergence is achieved by analyzing the variances between the multiple marakov chains.
+```{r}
+# Extract Posterior Samples
+Nrep = 3000
+
+samples <- coda.samples(m1, 
+                                 variable.names = c("beta0", "beta1", "phi"), 
+                                 n.iter = Nrep,
+                                 progress.bar = "none")
+samples.df <-as.data.frame(samples[[1]])
+
+##Diagnostic Checks of Markov Chain
+
+#Find ESS
+effectiveSize(samples)
+
+#Produce Traceplot
+traceplot(samples)
+
+#Examine convergence of the Markov chains using the Gelman-Brooks-Rubin diagnostic
+gelman.diag(samples)
+
+```
+
+
+#Problem 3
+
+In this model, we cannot interpret the impact of a change in X_i based on Y_i based on only one regression coefficent due to the fact that we have a multiple step process where we use beta0 and beta1 to estimate mu which then formulates a and b for our prior.
+```{r}
+#Posterior Means and 95% Credible Intervals for Beta_0,Beta_1,Phi
+precis(samples.df, prob = 0.95)[,1:4]
+
+#Results using betareg Package
+betareg_results <- betareg(InfantMortality ~ WaterAccess_centered | WaterAccess_centered, data = data)
+lmtest::coeftest(betareg_results)
+```
+
+#Problem 4
+
+```{r}
+#Find 95% Credible Interval for Mu
+mu.samples <- coda.samples(m1, 
+                        variable.names = c("mu"), 
+                        n.iter = Nrep,
+                        progress.bar = "none")
+mu.samples.df <- as.data.frame(mu.samples[[1]])
+
+sim_mu <- samples.df[]
+mu.CI <- sim_mu %>% precis(depth = 2, prob = .95)
+
+
+#Find 95% Credible Interval for Predications
+ynew.samples <- coda.samples(m1, 
+                        variable.names = c("ynew"), 
+                        n.iter = Nrep,
+                        progress.bar = "none")
+ynew.samples.df <- as.data.frame(ynew.samples[[1]])
+
+precis(ynew.samples.df, depth = 2, prob = .95)
+
+sim_ynew <- ynew.samples.df[]
+ynew.PI <- apply(sim_ynew, 2, PI, prob = .95)
+
+```
+
+```{r}
+#Production of Plot
+ggplot(data, aes(y = Y_i, x = X_i)) +
+geom_point() + geom_ribbon(aes(ymin = ynew.PI[1,], ymax = ynew.PI[2,],x=X_i), fill = alpha("yellow", .5)) + geom_ribbon(aes(ymin = mu.CI[,3], ymax = mu.CI[,4], x=X_i), fill = alpha("blue", .5)) + geom_line(aes(y = colMeans(sim_mu), x = X_i), col= "black")  +theme_bw()+
+  labs(
+    title = "Child Mortality Rate Model",
+    x = "Water Supply",
+    y = "Child Mortality Rate"
+  )+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+#Problem 5
+Here we can clearly see that the beta regression model fits the shape of the data alot better then the gausian model we had previously performed. Our predications capture the distribution or density of our observed data quite well as seen in the curves of one overlaying the other.
+
+```{r}
+#Posterior Predictive Check and Density Plot
+dens(Y_i, adj = 1, col = col.alpha("black", alpha = 1), xlim = range(sim_ynew))
+for(i in 1:200){
+  dens(t(sim_ynew[i,]), adj = 1, add = T, col = col.alpha("lightblue", alpha = .2))
+}
+legend("topright", legend = c("ynew", "obs"),
+       lty = c(1, 1), col = c("lightblue", "black"))
+mtext("Posterior Predictive Check - Infant Mortality ~ Access to Clean Water")
+```
+
+#Problem 6
+The average partial derivative from the beta model was actually pretty similar to the apd calculated in our former model despite being an numerical approximation.
+```{r}
+h=.001
+beta0<-samples.df$beta0
+beta1<-samples.df$beta1
+phi<-samples.df$phi
+
+```
+
+```{r}
+Ave_Partial <-function(input){
+beta_0 <- input[1]
+beta_1 <- input[2]
+phi <- input[3]
+
+n <- length(x)
+
+x1 <- beta_0 + beta_1*(x-h)
+x2 <- beta_0 + beta_1*(x+h)
+
+mu1 <- expit(x1)
+mu2 <- expit(x2)
+
+a1 <- mu1*phi
+b1 <- (1 - mu1)*phi
+
+a2 <- mu2*phi
+b2 <- (1 - mu2)*phi
+
+Ey1 <- a1/(a1 + b1)
+Ey2 <- a2/(a2 + b2)
+
+apd <- (Ey2 - Ey1)/(2*h)
+return(adp)
+}
+input <- apply(samples.df, 1, Ave_Partial)
+```
+
+```{r}
+bayes_bootstrap <- function(APD){
+  
+r = nrow(APD)
+c = ncol(APD)
+
+psi_post = numeric(c)
+
+for(i in 1:c) {
+bb_weights = rdirichlet(1, rep(1, r))
+psi_post[i] = sum(bb_weights*(APD[,c]))
+
+}
+return(psi_post)
+}
+
+APD <- bayes_bootstrap(input)*1000
+precis(APD, prob = 0.95)[, 1:4]
+```
+

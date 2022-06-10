@@ -1,0 +1,250 @@
+---
+title: "Homework 7: Beta. Logistic Regression and Hierarchial Models"
+subtitle: "By Rebecca Lopez"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(rjags)
+library(rethinking)
+```
+
+```{r}
+data <- read_csv('hospitals.csv')
+head(data)
+```
+```{r}
+data$p <- data$y/data$n
+p <- data$p
+n <- data$n
+y <- data$y
+```
+
+# Problem One
+We begin with standard model with no pooling.
+$Y_i|n_i,p_i \sim \text{Bin}(p_i,n_i)\\
+\text{logit}(p_i)=\alpha _i\\
+\alpha _i \sim N(0,1.5^2)$
+```{r}
+#Construct Model
+
+model_one <- "
+model{
+  
+  for (i in 1:13){
+  
+    y[i] ~ dbinom(p[i],n[i])
+    
+    ynew[i] ~ dbinom(p[i],n[i])
+    
+    logit(p[i]) <-  a[i]
+    
+    a[i] ~ dnorm(0,tau)
+  }
+  
+  sigma = 1.5
+  tau = 1/sigma^2
+}
+"
+#Run Model
+model <- jags.model(file=textConnection(model_one),
+                 data=list(y=y,
+                           n=n),
+                 n.chains = 4,
+                 n.adapt=1000)
+
+update(model, n.iter = 1000)
+
+```
+
+#Problem Two
+We extract the posterior samples. Note that our effective sample size tend to at around 7000 and above which implies that our chosen sample size was a not the best predication to match precision. Our traceplots imply that our parameters will converge for our model as desired. Lastly, we note our Gelman-Rubin diagnostic is 1 for each of our parameters which tells us that that convergence is achieved by analyzing the variances between the multiple marakov chains.
+```{r}
+#Extract Posterior Samples
+samples <- coda.samples(model, variable.names = c('p','a'),
+                         chains=4, n.iter=3000)
+#Diagnosis Checks
+traceplot(samples)
+effectiveSize(samples)
+gelman.diag(samples)
+```
+
+# Problem Three
+After looking at the CI intervals for each and all hospitals, it is very clear that they differ a lot and cover a wide range.
+```{r}
+#Posterior Means & 95% CI for p_i
+samples.df <- data.frame(samples[[1]])
+samples_p <- samples.df[,14:26]
+samples_p <- (samples_p %>% precis(prob=.95))[,1:4]
+samples_p
+
+#Posterior Means & 95% CI for Difference
+samples_dif <- samples.df[,14:26]
+samples_dif <- samples_dif[,c(7,1)]
+samples_dif <-samples_dif %>% mutate(diff = p.7. - p.1.)
+differnce <- (samples_dif$diff %>% precis(prob=.95))[,1:4]
+differnce
+
+#Posterior Probability Bellvue is better than Mt Sinai
+samples_better <- samples.df[,14:26]
+samples_better <- samples_better[,c(7,1)]
+samples_better$comp <- samples_better$p.7. > samples_better$p.1.
+mean(samples_better$comp) 
+```
+
+### (4)
+Below we compute the posterior probability of a lower death late and find Bellevue Hospital Center,Harlem Hospital Center, and the NYP Hospital - New York Weill Cornell Center to have the higher rates for being the better hospital which comes from lower death rates.
+```{r}
+samples_hospitals <- samples.df[,14:26]
+frequency <- function(samples_hospitals){
+  which.min(t(samples_hospitals))
+}
+
+best_hospitals <- table(apply(samples_hospitals,1,frequency))
+best_hospitals <- data.frame(best_hospitals)
+best_hospitals <- cbind(hospital = (data$name),best_hospitals)
+best_hospitals <- best_hospitals %>% mutate(post_prob = Freq/3000)
+best_hospitals %>% select(hospital, post_prob) %>% arrange(desc(post_prob))
+```
+
+#Hierarchical/Multilevel model 
+
+# Problem Five
+
+In this particular, $\mu# is the average death rate in terms of logit for a hispital where $\sigma$ is the standard derivation in the distribution of such death rate.
+
+#Problem Six
+In this case, we construct a hierarchical model where information is pooled across hospitals:
+```{r}
+#Construct Model
+model_two <- "
+model{
+  
+  for (i in 1:13){
+  
+    y[i] ~ dbinom(p[i],n[i])
+    
+    ynew[i] ~ dbinom(p[i],n[i])
+    
+    logit(p[i]) <-  a[i]
+    
+    a[i] ~ dnorm(mu,tau)
+  }
+  
+  mu ~ dnorm(0,mu_tau)
+  mu_sig = 1.5
+  mu_tau = 1/mu_sig^2
+  sigma ~ dexp(1)
+  tau = 1/sigma^2
+}
+"
+#Run Model
+model <- jags.model(file=textConnection(model_two),
+                 data=list(y=y,
+                           n=n),
+                 n.chains = 4,
+                 n.adapt=1000)
+
+update(model, n.iter = 1000)
+
+samples <- coda.samples(model, variable.names = c('mu','sigma'),
+                         chains=4, n.iter=3000)
+```
+
+```{r}
+#Diagnosis Checks
+traceplot(samples)
+effectiveSize(samples)
+gelman.diag(samples)
+```
+
+
+#Problem Seven
+In this case, we construct a hierarchical model where information is pooled across hospitals but also introduce a reparameterization to deal with low effective sample sizes
+```{r}
+#Construct Model
+model_three <- "
+model{
+  
+  for (i in 1:13){
+  
+    y[i] ~ dbinom(p[i],n[i])
+    
+    ynew[i] ~ dbinom(p[i],n[i])
+    
+    logit(p[i]) <-  mu + sigma*z[i]
+    
+    z[i] ~ dnorm(0,1)
+  }
+  
+  mu ~ dnorm(0,mu_tau)
+  mu_sig = 1.5
+  mu_tau = 1/mu_sig^2
+  sigma ~ dexp(1)
+  
+}
+"
+#Run Model
+model <- jags.model(file=textConnection(m1_code),
+                 data=list(y=y,
+                           n=n),
+                 n.chains = 4,
+                 n.adapt=1e3)
+
+update(model, n.iter = 1e3)
+
+samples <- coda.samples(model, variable.names = c('mu','sigma'),
+                         chains=4, n.iter=3000)
+```
+
+```{r}
+#Diagnosis Checks
+traceplot(samples)
+effectiveSize(samples)
+gelman.diag(samples)
+```
+
+
+#Problem Eight
+For this model, we notice that the means and the confidence intervals are a lot more similar amongst the hospitals than in previous models.
+```{r}
+samples <- coda.samples(model, variable.names = c('p'),
+                         chains=4, n.iter=3000)
+
+#Posterior Means & 95% CI for p_i
+samples.df <- data.frame(samples[[1]])
+samples_p <- (samples.df %>% precis(prob=.95))[,1:4]
+samples_p
+```
+
+# Problem Nine
+The probability that Bellevue hospital center is better than Mount Sinai actually dropped by 20%.
+```{r}
+#Posterior Means & 95% CI for Difference
+samples_dif <- samples.df[,c(7,1)]
+samples_dif <-samples_dif %>% mutate(diff = p.7. - p.1.)
+differnce <- (samples_dif$diff %>% precis(prob=.95))[,1:4]
+differnce
+
+#Posterior Probability Bellvue is better than Mt Sinai
+samples_better <- samples.df[,c(7,1)]
+samples_better$comp <- samples_better$p.7. > samples_better$p.1.
+mean(samples_better$comp) 
+```
+
+# Problem Ten
+For this model, we have the same three hospitals as before,Bellevue Hospital Center,Harlem Hospital Center, and the NYP Hospital - New York Weill Cornell Center to have the higher rates for being the better hospital which comes from lower death rates. However, their probability are no longer as high for each individually.
+```{r}
+samples_hospitals <- samples.df
+frequency <- function(samples_hospitals){
+  which.min(t(samples_hospitals))
+}
+
+best_hospitals <- table(apply(samples_hospitals,1,frequency))
+best_hospitals <- data.frame(best_hospitals)
+best_hospitals <- cbind(hospital = (data$name),best_hospitals)
+best_hospitals <- best_hospitals %>% mutate(post_prob = Freq/3000)
+best_hospitals %>% select(hospital, post_prob) %>% arrange(desc(post_prob))
+```
+

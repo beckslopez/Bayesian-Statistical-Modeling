@@ -1,0 +1,202 @@
+---
+title: "Problem Set 1: Bayesian Inference"
+subtitle: By Becks Lopez
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+#Setting up Necessary Packages 
+```{r}
+library(rethinking)
+```
+
+# Problem 2M1: Globe Tossing
+We assume a uniform distrubtion prior for $p$ which is the true proportion of water coving the globe.And consider three different cases for posterior distribution:
+
+(1)W,W,W
+```{r}
+#Set up grid 
+p_grid<-seq(0,1,length.out = 100) 
+
+#Likelihood of getting 3 W within 3 tosses
+likelihood<-dbinom(3,size=3,prob=p_grid)
+
+prior <-  rep(1,100)
+posterior <- likelihood*prior
+posterior <- posterior/sum(posterior)
+
+#Produce plot of posterior distribution
+plot(posterior ~ p_grid,type="l", main="(1) W W W")
+
+```
+(2) W,W,W,L
+```{r}
+#Set up grid 
+p_grid<-seq(0,1,length.out = 100) 
+
+#Likelihood of getting 3 W within 4 tosses
+likelihood2<-dbinom(3,size=4,prob=p_grid)
+
+prior <-rep(1,100)
+posterior2 <- likelihood2*prior
+posterior2 <- posterior2/sum(posterior2)
+#Produce plot of posterior distribution
+plot(posterior2 ~ p_grid,type="l", main="(2) W W W L")
+```
+(3)L,W,W,L,W,W,W
+```{r}
+#Set up grid 
+p_grid<-seq(0,1,length.out = 100) 
+
+#Likelihood of getting 5 W within 7 tosses
+likelihood3<-dbinom(5,size=7,prob=p_grid)
+
+prior <-  rep(1,100)
+posterior3 <- likelihood3*prior
+posterior3 <- posterior3/sum(posterior3)
+#Produce plot of posterior distribution
+plot(posterior3 ~ p_grid,type="l", main="(3)L,W,W,L,W,W,W")
+```
+
+Notice that with increased data size, we begin to convergence towards the true $p$.
+
+# Problem 2M2:
+Here we assume that our prior equals zero for $p<0.5$ and is a positive constant for $p \geq 0.5$ and repeat the process from problem 2M1 for three cases.
+
+(1)W,W,W
+```{r}
+p_grid <-seq(0,1,length.out = 100)
+prior_truncated <-ifelse(p_grid<0.5,0,1)
+posterior_truncated <-likelihood*prior_truncated
+posterior_truncated <-posterior_truncated/sum(posterior_truncated)
+plot(posterior_truncated ~ p_grid,type="l", main="(1) W W W")
+```
+
+
+(2) W,W,W,L
+```{r}
+posterior_truncated2 <-likelihood2*prior_truncated
+posterior_truncated2 <-posterior_truncated2/sum(posterior_truncated2)
+plot(posterior_truncated2 ~ p_grid,type="l", main="(2) W W W L")
+```
+(3)L,W,W,L,W,W,W
+```{r}
+posterior_truncated3 <- likelihood3*prior_truncated
+posterior_truncated3 <- posterior_truncated3/sum(posterior_truncated3)
+plot(posterior_truncated3 ~ p_grid,type="l", main="(3)L,W,W,L,W,W,W")
+```
+# Problem 2M3
+We know that earth is 70% water which implies 30% land. Additionally, we are given that Mars is 100% land, and 0% water.Therefore, we know that: 
+$$P(\text{land}|\text{Earth})=0.3\\
+P(\text{land}|\text{Mars})=1.0$$
+We assume that each globe was equally likely to be tossed which implies that $P(\text{Mars})=P(\text{Earth})=0.5.$ We know that based on the rules of conditional probability that
+$$P(\text{Earth}|\text{Land})=\frac{P(\text{land}|\text{Earth})P(\text{Earth})}{P(\text{Land})}$$ where $P(\text{Land})=P(\text{land}|\text{Earth})*P(\text{Earth})+P(\text{land}|\text{Mars})*P(\text{Mars}).$ We can substitute in our probabilitys to state:
+$$P(\text{Earth}|\text{Land})=\frac{P(\text{land}|\text{Earth})P(\text{Earth})}{P(\text{land}|\text{Earth})*P(\text{Earth})+P(\text{land}|\text{Mars})*P(\text{Mars})}\\
+= \frac{0.3*0.5}{0.3*0.5+1*0.5}.$$ We compute below to find that $P(\text{Earth}|\text{Land})=0.23.$
+
+```{r}
+P_EL=0.3*0.5 / ( 0.3*0.5 + 1*0.5 )
+P_EL
+```
+
+#Chapter3 Problems
+Blow is the code from the textbook to set up our posterior distrubtion for problems 3E1-3E7.
+```{r}
+#Code for #3E1-3E7 from textbook
+p_grid <- seq( from=0 , to=1 , length.out=1000 )
+prior <- rep( 1 , 1000 )
+likelihood <- dbinom( 6 , size=9 , prob=p_grid )
+posterior <- likelihood * prior
+posterior <- posterior / sum(posterior)
+set.seed(100)
+samples <- sample( p_grid , prob=posterior , size=1e4 , replace=TRUE )
+```
+
+```{r}
+#Probem 3E1: How much posterior probability lies below p = 0.2?
+sum(samples<0.2)/1e4
+
+#Problem 3E2: How much posterior probability lies above p = 0.8?
+sum(samples>0.8)/1e4
+
+#Problem 3E3: How much posterior probability lies between p = 0.2 and p = 0.8?
+sum(samples>0.2 & samples <0.8)/1e4
+
+#Problem3E4: 20% of the posterior probability lies below which value of p?
+quantile(samples, 0.2)
+
+#Problem3E5: 20% of the posterior probability lies above which value of p?
+quantile(samples, 0.8)
+
+#Problem3E6: Which values of p contain the narrowest interval equal to 66% of the posterior probability?
+HPDI(samples, prob =0.66)
+
+#Problem3E7: Which values of p contain 66% of the posterior probability, assuming equal posterior probability both below and above the interval?
+PI(samples, prob=0.66)
+
+```
+#Chapter 3 Problems:
+
+#Problem 3M1:
+We return to the globe tossing example and construct our posterior distribution using a grid approximation assuming a flat prior.
+
+```{r}
+#Code utilized from textbook
+p_grid <- seq(0,1 ,length.out=1000 )
+prior <- rep(1,1000)
+
+likelihood <- dbinom(8,size=15 , prob=p_grid )
+posterior <- likelihood * prior_truncated
+
+posterior <- posterior / sum(posterior)
+plot(posterior ~ p_grid,type="l", main="8 W in 15 Tosses")
+```
+
+#Problem 3M2:
+We draw 10000 samples from our grid approximnation and the sames to find the narrowest interval equal to $90 \%$ of our posterior probability.
+```{r}
+samples <- sample( p_grid , size=1e4 , replace=TRUE , prob=posterior )
+HPDI(samples, prob =0.90)
+```
+
+#Problem 3M3: 
+We construct a posterior predictive check for our model where we generate random binomial samples and find the probability of observin 8 waters in 15 tosess:
+```{r}
+w<-rbinom(1e4,size = 15, prob=samples)
+sum(w==8)/1e4
+```
+
+#Problem 3M4
+We utiilize the same samples in order to utilize the posterior distribution as before in order to find the probability of observing 6 water in 9 tosses:
+```{r}
+w<-rbinom(1e4,size = 9, prob=samples)
+sum(w==6)/1e4
+```
+
+#Problem 3M5
+We rerun through our code above but with one difference, we now use a prior that is zero below our threshold $(p=0.5)$ and a constant above that threshold:
+```{r}
+#Construct the posterior distribution, using grid approximation. 
+p_grid <- seq( from=0 , to=1 , length.out=1000 )
+prior_truncated <-ifelse(p_grid<0.5,0,1)
+likelihood <- dbinom( 8 , size=15 , prob=p_grid )
+posterior_truncated <- likelihood * prior_truncated
+posterior_truncated <- posterior_truncated / sum(posterior_truncated)
+plot(posterior_truncated ~ p_grid,type="l", main="8 W in 15 Tosses")
+
+# Draw 10,000 samples from the grid approximation from above. Then use the samples to calculate the 90% HPDI for p
+samples <- sample( p_grid , size=1e4 , replace=TRUE , prob=posterior )
+HPDI(samples, prob =0.90)
+
+#Construct a posterior predictive check for this model and data. Find the probability of observing 8 water in 15 tosses.
+w<-rbinom(1e4,size = 15, prob=samples)
+sum(w==8)/1e4
+
+#Using the posterior distribution constructed, find the probability of observing 6 water in 9 tosses.
+w<-rbinom(1e4,size = 9, prob=samples)
+sum(w==6)/1e4
+```
+
+Note that using the prior with a threshold actually ended up giving us higher probabilities for 6 W in 15 tosses (0.1851) versus a flat prior (0.1735) where $6/15=0.\bar{6}$ which is close to our true value of $p=0.7.$ We see that while $8/15=0.5\bar{3}$ is slighly further from our true value and thus has lower probability, the prior with a threhold still makes a better inference (0.1486) than the flat uniform prior (0.1479).
+
