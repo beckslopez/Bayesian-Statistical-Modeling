@@ -11,7 +11,7 @@ Although this is an introductory course, we do cover a wide range of models. We 
 # Assignment Overview
 --------------------------------------------------------------------------------------
 
-Each file contains the code for a lab on for a specific concept we focused such week. 
+Each file contains the code for a lab on for a specific concept we focused such week where assignments closely follow Richard McElreath's book "Statistical Rethinking: A Bayesian Course with Examples in R and Stan (2nd Edition)."
 
 -Bayesian Inference
 
